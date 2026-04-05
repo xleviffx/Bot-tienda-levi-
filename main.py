@@ -1,4 +1,6 @@
-import os, sqlite3
+import os
+import sqlite3
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 
@@ -10,10 +12,12 @@ MI_CONTACTO = "https://t.me"
 def init_db():
     conn = sqlite3.connect('tienda.db')
     cursor = conn.cursor()
-    # Tablas corregidas para SQLite
-    cursor.execute('CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY, saldo REAL DEFAULT 0, autorizado INTEGER DEFAULT 0)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS inventario (id INTEGER PRIMARY KEY AUTOINCREMENT, producto TEXT, duracion TEXT, precio REAL, key TEXT)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS historial (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, detalle TEXT)')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS usuarios 
+                      (id INTEGER PRIMARY KEY, saldo REAL DEFAULT 0, autorizado INTEGER DEFAULT 0)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS inventario 
+                      (id INTEGER PRIMARY KEY AUTOINCREMENT, producto TEXT, duracion TEXT, precio REAL, key TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS historial 
+                      (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, detalle TEXT)''')
     conn.commit()
     conn.close()
 
@@ -51,20 +55,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = "👋 ¡Bienvenido Jefe!" if uid == ADMIN_ID else "🛒 Menú de Ventas"
     await update.message.reply_text(txt, reply_markup=main_kb(uid))
 
-# Comandos de Admin (Solo tú)
+# Comandos Admin
 async def dar_saldo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     try:
         uid, monto = int(context.args[0]), float(context.args[1])
         db_query("INSERT OR IGNORE INTO usuarios (id, autorizado) VALUES (?, 1)", (uid,))
         db_query("UPDATE usuarios SET saldo = saldo + ?, autorizado = 1 WHERE id = ?", (monto, uid))
-        await update.message.reply_text(f"💰 Saldo añadido a {uid}")
+        await update.message.reply_text(f"💰 Saldo de ${monto} añadido a {uid}")
     except: await update.message.reply_text("Uso: /dar ID MONTO")
 
 async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     try:
-        # /addkey producto duracion precio key
         p, d, pr, k = context.args[0], context.args[1], float(context.args[2]), context.args[3]
         db_query("INSERT INTO inventario (producto, duracion, precio, key) VALUES (?, ?, ?, ?)", (p, d, pr, k))
         await update.message.reply_text(f"✅ Key guardada en {p} {d}")
@@ -107,10 +110,16 @@ async def query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Menú Principal:", reply_markup=main_kb(uid))
 
 if __name__ == '__main__':
-    token = os.environ.get("BOT_TOKEN")
-    app = ApplicationBuilder().token(token).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("dar", dar_saldo))
-    app.add_handler(CommandHandler("addkey", add_key))
-    app.add_handler(CallbackQueryHandler(query_handler))
-    app.run_polling(drop_pending_updates=True)
+    # LEER TOKEN DE RAILWAY (Asegúrate que en Railway se llame BOT_TOKEN)
+    token_env = os.environ.get("BOT_TOKEN")
+    
+    if not token_env:
+        print("❌ ERROR: No se encontró la variable BOT_TOKEN en Railway.")
+    else:
+        app = ApplicationBuilder().token(token_env).build()
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("dar", dar_saldo))
+        app.add_handler(CommandHandler("addkey", add_key))
+        app.add_handler(CallbackQueryHandler(query_handler))
+        print("✅ Bot iniciado correctamente")
+        app.run_polling(drop_pending_updates=True)
