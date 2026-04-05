@@ -1,118 +1,116 @@
-import os, sqlite3, logging
+import os, sqlite3
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 
 # --- CONFIGURACIÓN ---
 ADMIN_ID = 8426713423 
-MI_CONTACTO = "https://t.me/xleviffx"
+MI_CONTACTO = "https://t.me"
 
 # --- BASE DE DATOS ---
 def init_db():
     conn = sqlite3.connect('tienda.db')
     cursor = conn.cursor()
-    cursor.execute('CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY, saldo REAL, autorizado INTEGER)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS inventario (id INTEGER PRIMARY KEY, producto TEXT, precio_id TEXT, key TEXT)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS historial (id INTEGER PRIMARY KEY AUTO_INCREMENT, user_id INTEGER, detalle TEXT)')
+    # Tablas corregidas para SQLite
+    cursor.execute('CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY, saldo REAL DEFAULT 0, autorizado INTEGER DEFAULT 0)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS inventario (id INTEGER PRIMARY KEY AUTOINCREMENT, producto TEXT, duracion TEXT, precio REAL, key TEXT)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS historial (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, detalle TEXT)')
     conn.commit()
     conn.close()
 
 init_db()
 
-# --- FUNCIONES DE APOYO ---
-def db_query(query, params=(), fetch=False):
+def db_query(query, params=(), fetch_one=False, fetch_all=False):
     conn = sqlite3.connect('tienda.db')
     cursor = conn.cursor()
     cursor.execute(query, params)
-    res = cursor.fetchall() if fetch else None
+    res = None
+    if fetch_one: res = cursor.fetchone()
+    if fetch_all: res = cursor.fetchall()
     conn.commit()
     conn.close()
     return res
 
-# --- COMANDOS ADMIN ---
-async def dar_acceso(update, context):
-    if update.effective_user.id != ADMIN_ID: return
-    try:
-        target_id = int(context.args[0])
-        db_query("INSERT OR REPLACE INTO usuarios (id, saldo, autorizado) VALUES (?, 0, 1)", (target_id,))
-        await update.message.reply_text(f"✅ Usuario {target_id} autorizado.")
-    except: await update.message.reply_text("Uso: /acceso ID")
-
-async def dar_saldo(update, context):
-    if update.effective_user.id != ADMIN_ID: return
-    try:
-        tid, monto = int(context.args[0]), float(context.args[1])
-        db_query("UPDATE usuarios SET saldo = saldo + ? WHERE id = ?", (monto, tid))
-        await update.message.reply_text(f"💰 Saldo actualizado para {tid}")
-    except: await update.message.reply_text("Uso: /dar ID MONTO")
-
-async def add_key(update, context):
-    if update.effective_user.id != ADMIN_ID: return
-    try:
-        prod, precio_id, key = context.args[0], context.args[1], context.args[2]
-        db_query("INSERT INTO inventario (producto, precio_id, key) VALUES (?, ?, ?)", (prod, precio_id, key))
-        await update.message.reply_text(f"🔑 Key añadida a {prod} ({precio_id})")
-    except: await update.message.reply_text("Uso: /addkey [ios/android/cert] [precio_id] [key]\nEjemplo: /addkey ios 31d ABCD-123")
-
 # --- MENÚS ---
-async def start(update, context):
+def main_kb(uid):
+    btns = [
+        [InlineKeyboardButton("👤 Perfil", callback_data='perfil'), InlineKeyboardButton("🛒 Productos", callback_data='cat')],
+        [InlineKeyboardButton("🔑 Últimas 10 Keys", callback_data='historial')]
+    ]
+    return InlineKeyboardMarkup(btns)
+
+# --- COMANDOS ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    user_data = db_query("SELECT autorizado, saldo FROM usuarios WHERE id = ?", (uid,), True)
+    user = db_query("SELECT autorizado FROM usuarios WHERE id = ?", (uid,), fetch_one=True)
     
-    if uid != ADMIN_ID and (not user_data or user_data[0][0] == 0):
-        kb = [[InlineKeyboardButton("📩 Contactar para Acceso", url=MI_CONTACTO)]]
-        await update.message.reply_text(f"❌ **ACCESO DENEGADO**\nID: `{uid}`", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+    if uid != ADMIN_ID and (not user or user[0] == 0):
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("📩 Contactar Admin", url=MI_CONTACTO)]])
+        await update.message.reply_text(f"❌ **ACCESO DENEGADO**\nTu ID: `{uid}`", reply_markup=kb, parse_mode='Markdown')
         return
 
-    txt = "👋 ¡Bienvenido Jefe!" if uid == ADMIN_ID else "🛒 Bienvenido a la Tienda"
-    kb = [
-        [InlineKeyboardButton("👤 Perfil", callback_data='p'), InlineKeyboardButton("🛒 Productos", callback_data='cat')],
-        [InlineKeyboardButton("🔑 Últimas 10 Keys", callback_data='h')]
-    ]
-    await update.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+    txt = "👋 ¡Bienvenido Jefe!" if uid == ADMIN_ID else "🛒 Menú de Ventas"
+    await update.message.reply_text(txt, reply_markup=main_kb(uid))
 
-async def callback_handler(update, context):
-    q = update.callback_query
-    await q.answer()
-    uid = q.from_user.id
+# Comandos de Admin (Solo tú)
+async def dar_saldo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    try:
+        uid, monto = int(context.args[0]), float(context.args[1])
+        db_query("INSERT OR IGNORE INTO usuarios (id, autorizado) VALUES (?, 1)", (uid,))
+        db_query("UPDATE usuarios SET saldo = saldo + ?, autorizado = 1 WHERE id = ?", (monto, uid))
+        await update.message.reply_text(f"💰 Saldo añadido a {uid}")
+    except: await update.message.reply_text("Uso: /dar ID MONTO")
 
-    if q.data == 'p':
-        res = db_query("SELECT saldo FROM usuarios WHERE id = ?", (uid,), True)
-        saldo = res[0][0] if res else 0.0
-        txt = f"👤 **PERFIL**\nID: `{uid}`\nNombre: {q.from_user.first_name}\n💰 Balance: ${saldo}"
-        kb = [[InlineKeyboardButton("⬅️ ATRÁS", callback_data='inicio')]]
-        await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    try:
+        # /addkey producto duracion precio key
+        p, d, pr, k = context.args[0], context.args[1], float(context.args[2]), context.args[3]
+        db_query("INSERT INTO inventario (producto, duracion, precio, key) VALUES (?, ?, ?, ?)", (p, d, pr, k))
+        await update.message.reply_text(f"✅ Key guardada en {p} {d}")
+    except: await update.message.reply_text("Uso: /addkey [ios/and/cert] [1d/7d/31d] [precio] [key]")
 
-    elif q.data == 'cat':
-        kb = [
+# --- MANEJADOR DE BOTONES ---
+async def query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+
+    if query.data == 'perfil':
+        u = db_query("SELECT saldo FROM usuarios WHERE id = ?", (uid,), fetch_one=True)
+        s = u[0] if u else 0.0
+        txt = f"👤 **PERFIL**\nID: `{uid}`\nNombre: {query.from_user.first_name}\n💰 Balance: ${s}"
+        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ ATRÁS", callback_data='inicio')]]), parse_mode='Markdown')
+
+    elif query.data == 'cat':
+        btns = [
             [InlineKeyboardButton("🍎 IOS", callback_data='ios'), InlineKeyboardButton("🤖 ANDROID", callback_data='and')],
             [InlineKeyboardButton("📜 CERTIFICADO APPLE", callback_data='cert')],
             [InlineKeyboardButton("⬅️ ATRÁS", callback_data='inicio')]
         ]
-        await q.edit_message_text("Selecciona Categoría:", reply_markup=InlineKeyboardMarkup(kb))
+        await query.edit_message_text("Selecciona Categoría:", reply_markup=InlineKeyboardMarkup(btns))
 
-    elif q.data == 'ios':
-        kb = [[InlineKeyboardButton("💎 FLOURITE", callback_data='flour')], [InlineKeyboardButton("⬅️ ATRÁS", callback_data='cat')]]
-        await q.edit_message_text("Productos iOS:", reply_markup=InlineKeyboardMarkup(kb))
+    elif query.data == 'ios':
+        btns = [[InlineKeyboardButton("💎 FLOURITE", callback_data='flour')], [InlineKeyboardButton("⬅️ ATRÁS", callback_data='cat')]]
+        await query.edit_message_text("Productos iOS:", reply_markup=InlineKeyboardMarkup(btns))
 
-    elif q.data == 'flour':
-        kb = [
+    elif query.data == 'flour':
+        btns = [
             [InlineKeyboardButton("🗓️ 31 DÍAS - $18", callback_data='buy_ios_31d_18')],
             [InlineKeyboardButton("🗓️ 7 DÍAS - $9", callback_data='buy_ios_7d_9')],
             [InlineKeyboardButton("🗓️ 1 DÍA - $3", callback_data='buy_ios_1d_3')],
             [InlineKeyboardButton("⬅️ ATRÁS", callback_data='ios')]
         ]
-        await q.edit_message_text("Opciones Flourite:", reply_markup=InlineKeyboardMarkup(kb))
+        await query.edit_message_text("Precios Flourite:", reply_markup=InlineKeyboardMarkup(btns))
 
-    elif q.data == 'inicio':
-        kb = [[InlineKeyboardButton("👤 Perfil", callback_data='p'), InlineKeyboardButton("🛒 Productos", callback_data='cat')]]
-        await q.edit_message_text("Menú Principal:", reply_markup=InlineKeyboardMarkup(kb))
+    elif query.data == 'inicio':
+        await query.edit_message_text("Menú Principal:", reply_markup=main_kb(uid))
 
 if __name__ == '__main__':
-    t = os.environ.get("BOT_TOKEN")
-    app = ApplicationBuilder().token(t).build()
+    token = os.environ.get("BOT_TOKEN")
+    app = ApplicationBuilder().token(token).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("acceso", dar_acceso))
     app.add_handler(CommandHandler("dar", dar_saldo))
     app.add_handler(CommandHandler("addkey", add_key))
-    app.add_handler(CallbackQueryHandler(callback_handler))
+    app.add_handler(CallbackQueryHandler(query_handler))
     app.run_polling(drop_pending_updates=True)
