@@ -6,7 +6,7 @@ TOKEN = os.environ.get('BOT_TOKEN')
 bot = telebot.TeleBot(TOKEN)
 
 # --- 1. CONFIGURACIÓN DEL DUEÑO ---
-ADMIN_ID = 123456789  # <--- CAMBIA ESTO POR TU ID (NÚMERO)
+ADMIN_ID = 8426713423  # <--- CAMBIA ESTO POR TU ID (NÚMERO)
 MI_USUARIO_TELEGRAM = "xleviffx" # Tu usuario configurado
 
 # Bases de datos temporales
